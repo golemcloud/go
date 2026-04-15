@@ -126,7 +126,7 @@ func notetsleepg(n *note, ns int64) bool {
 	return ok
 }
 
-func beforeIdle(int64, int64) (*g, bool) {
+func beforeIdle(int64, int64, bool) (*g, bool) {
 	return nil, false
 }
 

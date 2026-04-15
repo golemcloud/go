@@ -214,7 +214,7 @@ var idleTimeout *timeoutEvent
 // TODO(drchase): need to understand if write barriers are really okay in this context.
 //
 //go:yeswritebarrierrec
-func beforeIdle(now, pollUntil int64) (gp *g, otherReady bool) {
+func beforeIdle(now, pollUntil int64, netWaiters bool) (gp *g, otherReady bool) {
 	delay := int64(-1)
 	if pollUntil != 0 {
 		// round up to prevent setTimeout being called early
