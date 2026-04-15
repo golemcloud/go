@@ -115,8 +115,8 @@ func wasiOnIdle(callback func() bool) {
 	onIdle = callback
 }
 
-func beforeIdle(int64, int64) (*g, bool) {
-	return nil, onIdle()
+func beforeIdle(now int64, pollUntil int64, netWaiters bool) (*g, bool) {
+	return nil, !netWaiters && onIdle()
 }
 
 func checkTimeouts() {}
