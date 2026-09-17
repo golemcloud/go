@@ -1281,6 +1281,21 @@ func castogscanstatus(gp *g, oldval, newval uint32) bool {
 // various latencies on every transition instead of sampling them.
 var casgstatusAlwaysTrack = false
 
+// goroutineTracking enables the sampled goroutine latency tracking in casgstatus
+// (which feeds /sched/latencies:seconds and /sync/mutex/wait/total:seconds).
+//
+// It is disabled on wasip1. The sampler decides whether to read the clock from a
+// per-goroutine transition counter that accumulates over the goroutine's whole
+// life, so on a host that records and replays the guest's host calls (a durable
+// execution engine such as Golem), the clock reads it issues are a function of
+// the entire execution history. Such hosts legitimately resume a guest without
+// re-executing that history (snapshot-based recovery, state save/load hooks run
+// outside the recording), which makes the sampler's clock reads irreproducible
+// by construction and breaks positional replay. The two metrics the sampler
+// feeds carry no information on a single-threaded wasm guest, and no runtime
+// decision depends on them, so it is turned off outright rather than reseeded.
+const goroutineTracking = GOOS != "wasip1"
+
 // If asked to move to or from a Gscanstatus this will throw. Use the castogscanstatus
 // and casfrom_Gscanstatus instead.
 // casgstatus will loop if the g->atomicstatus is in a Gscan status until the routine that
@@ -1335,7 +1350,7 @@ func casgstatus(gp *g, oldval, newval uint32) {
 	if (oldval == _Grunning || oldval == _Gsyscall) && (newval != _Grunning && newval != _Gsyscall) {
 		// Track every gTrackingPeriod time a goroutine transitions out of _Grunning or _Gsyscall.
 		// Do not track _Grunning <-> _Gsyscall transitions, since they're two very similar states.
-		if casgstatusAlwaysTrack || gp.trackingSeq%gTrackingPeriod == 0 {
+		if goroutineTracking && (casgstatusAlwaysTrack || gp.trackingSeq%gTrackingPeriod == 0) {
 			gp.tracking = true
 		}
 		gp.trackingSeq++
@@ -5413,7 +5428,7 @@ func newproc1(fn *funcval, callergp *g, callerpc uintptr, parked bool, waitreaso
 	}
 	// Track initial transition?
 	newg.trackingSeq = uint8(cheaprand())
-	if newg.trackingSeq%gTrackingPeriod == 0 {
+	if goroutineTracking && newg.trackingSeq%gTrackingPeriod == 0 {
 		newg.tracking = true
 	}
 	gcController.addScannableStack(pp, int64(newg.stack.hi-newg.stack.lo))
