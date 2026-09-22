@@ -63,8 +63,10 @@ golem/release.sh go1.27.1-golem.1          # --dry-run to build without uploadin
 The script cross-builds `go-<os>-<arch>-bootstrap.tbz` for linux/amd64,
 linux/arm64, darwin/amd64, darwin/arm64 and windows/amd64 using Go's own
 `src/bootstrap.bash`, checks that both patches are present in the built tree,
-and uploads the tarballs and their `.sha256` files to the release. Go toolchain
-builds are reproducible, so anyone can rebuild a tag and compare checksums.
+and uploads the tarballs and their `.sha256` files to the release. The checksums
+identify the published artifacts; they are not a rebuild guarantee, because
+`bootstrap.bash` packs the tree with its current file timestamps, so two builds
+of the same tag produce tarballs that differ in metadata.
 
 It runs on Linux or macOS (any host can cross-build every target) and needs a
 host Go to bootstrap from (`GOROOT_BOOTSTRAP`, defaults to the `go` on PATH)
