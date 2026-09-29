@@ -1,6 +1,6 @@
 # Golem's Go fork
 
-This is [golang/go](https://github.com/golang/go) with two patches that
+This is [golang/go](https://github.com/golang/go) with three patches that
 [Golem](https://github.com/golemcloud/golem)'s Go SDK needs in the toolchain
 that compiles agents to WebAssembly components. The Golem CLI downloads a
 release of this fork and builds Go components with it; nothing else about Go
@@ -41,6 +41,23 @@ information on a single-threaded wasm guest. The patch gates the two places that
 arm tracking on `const goroutineTracking = GOOS != "wasip1"`. A GODEBUG knob
 would be the upstream-friendly form and is on Golem's list to propose.
 
+### 3. GC timestamps without a wall-clock read on wasip1 (ours)
+
+GC mark termination stamps `MemStats.LastGC` and `PauseEnd` with the wall clock.
+A component-model host lowers large results into guest memory through
+`cabi_realloc`, whose allocation can finish a GC cycle, and calling any import
+from `cabi_realloc` is forbidden. The guest pauses the monotonic clock around
+that allocation, so the wasip1 adapter serves monotonic reads from a cache, but
+the adapter does not pause the wall clock: the GC's wall-clock read reaches the
+host and traps the component ("cannot leave component instance").
+
+The patch makes `time.Now` record the offset between the two clocks it has just
+read (`lastWallMinusMono`), and mark termination adds that offset to the
+monotonic time instead of reading the wall clock
+(`const gcWallFromMono = GOOS == "wasip1"`). It issues no clock read of its own.
+The proper fix is for the adapter to pause the wall clock too; once it does, this
+patch can go.
+
 ## Branches and tags
 
 - `golem-go1.27` — the integration branch, based on the upstream `go1.27.1` tag,
@@ -62,7 +79,7 @@ golem/release.sh go1.27.1-golem.1          # --dry-run to build without uploadin
 
 The script cross-builds `go-<os>-<arch>-bootstrap.tbz` for linux/amd64,
 linux/arm64, darwin/amd64, darwin/arm64 and windows/amd64 using Go's own
-`src/bootstrap.bash`, checks that both patches are present in the built tree,
+`src/bootstrap.bash`, checks that all three patches are present in the built tree,
 and uploads the tarballs and their `.sha256` files to the release. The checksums
 identify the published artifacts; they are not a rebuild guarantee, because
 `bootstrap.bash` packs the tree with its current file timestamps, so two builds
@@ -89,12 +106,14 @@ instead — that is how you test a change to this fork before releasing it.
 ```shell
 git fetch https://github.com/golang/go.git refs/tags/go1.28.0:refs/tags/go1.28.0
 git switch -c golem-go1.28 go1.28.0
-git cherry-pick <wasiOnIdle commits> <sampling commit>   # from golem-go1.27
+git cherry-pick <wasiOnIdle commits> <sampling commit> <gc wall-clock commit>   # from golem-go1.27
 ```
 
 Take the `wasiOnIdle` commits from dicej's branch for that Go version when it
 exists — it is the upstream of that patch — and keep authorship. Then open the
 cherry-picks as pull requests, tag `go1.28.0-golem.1`, and run the release
-script. Check whether either patch has been obsoleted upstream first: if
+script. Check whether any patch has been obsoleted upstream first: if
 golang/go#76775 lands, patch 1 is no longer needed; if Go gains a knob for
-scheduler sampling, patch 2 becomes a GODEBUG setting in the Golem CLI instead.
+scheduler sampling, patch 2 becomes a GODEBUG setting in the Golem CLI instead;
+if the wasip1 adapter pauses the wall clock with the monotonic one, patch 3 is
+no longer needed.
