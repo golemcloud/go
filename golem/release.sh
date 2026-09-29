@@ -16,6 +16,10 @@
 
 set -euo pipefail
 
+# The fork's checkout usually has other remotes too (upstream, dicej/go), which
+# gh would otherwise pick from; releases always go to the fork.
+export GH_REPO=golemcloud/go
+
 TARGETS=(
 	linux/amd64
 	linux/arm64
