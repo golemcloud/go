@@ -322,6 +322,24 @@ func pollFractionalWorkerExit() bool {
 	return float64(selfTime)/float64(delta) > 1.2*gcController.fractionalUtilizationGoal
 }
 
+// gcWallFromMono makes GC mark termination derive its Unix timestamp (MemStats
+// LastGC and PauseEnd) from the monotonic clock and the offset between the two
+// clocks last observed by time.Now, instead of reading the wall clock.
+//
+// It is enabled on wasip1. A component-model host lowers large results into
+// guest memory through cabi_realloc, whose allocation can finish a GC cycle,
+// and calling any import from cabi_realloc is forbidden: the wasip1 adapter
+// serves monotonic reads from a cache while the guest has paused that clock
+// around the allocation, but a wall-clock read always reaches the host and
+// traps the component ("cannot leave component instance"). Deriving the
+// timestamp issues no clock read of its own, so it also adds none to the host
+// calls a durable execution engine records.
+const gcWallFromMono = GOOS == "wasip1"
+
+// lastWallMinusMono is the Unix time minus the monotonic time, in nanoseconds,
+// at the last time.Now; see gcWallFromMono.
+var lastWallMinusMono int64
+
 var work workType
 
 type workType struct {
@@ -1429,8 +1447,13 @@ func gcMarkTermination(stw worldStop) {
 
 	// Update timing memstats
 	now := nanotime()
-	sec, nsec, _ := time_now()
-	unixNow := sec*1e9 + int64(nsec)
+	var unixNow int64
+	if gcWallFromMono {
+		unixNow = now + lastWallMinusMono
+	} else {
+		sec, nsec, _ := time_now()
+		unixNow = sec*1e9 + int64(nsec)
+	}
 	work.pauseNS += now - stw.startedStopping
 	work.tEnd = now
 	atomic.Store64(&memstats.last_gc_unix, uint64(unixNow)) // must be Unix time to make sense to user
