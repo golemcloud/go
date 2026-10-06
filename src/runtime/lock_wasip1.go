@@ -117,27 +117,56 @@ func wasiOnIdle(callback func() bool) {
 	onIdle = callback
 }
 
-// idleNow and idlePollUntil are the clock reading and the next timer's due time
-// (0 when no timer is pending) of the latest idle transition, for the onIdle
-// callback to read with wasiIdleTimer.
-var idleNow, idlePollUntil int64
+// idlePollUntil is when the next program timer is due (0 when none is) at the
+// latest idle transition, for the onIdle callback to read with wasiIdleTimer.
+var idlePollUntil int64
 
 func beforeIdle(now int64, pollUntil int64, netWaiters bool) (*g, bool) {
-	if now == 0 {
-		now = nanotime()
+	// No clock is read here: an idle transition is exactly where a host may
+	// suspend the component, and a clock read there keeps a durable host from
+	// treating it as parked.
+	idlePollUntil = 0
+	if pollUntil != 0 {
+		idlePollUntil = nextProgramTimer()
 	}
-	idleNow, idlePollUntil = now, pollUntil
 	return nil, !netWaiters && onIdle()
 }
 
-// wasiIdleTimer reports, to an onIdle callback, the monotonic clock reading at
-// the idle transition and when the next timer is due (0 when none is). A
-// callback that hands control to the host must arrange to be resumed by then,
-// or the timer cannot fire.
+// nextProgramTimer is when the earliest timer the program itself set is due,
+// or 0 when none is pending. The background scavenger's sleep is left out: it
+// is housekeeping that can wait until the component runs again, and a host
+// clock wait armed for it would keep an otherwise idle component from ever
+// suspending.
+func nextProgramTimer() int64 {
+	var next int64
+	for _, pp := range allp {
+		ts := &pp.timers
+		lock(&ts.mu)
+		for _, tw := range ts.heap {
+			if tw.timer == scavenger.timer {
+				continue
+			}
+			if tw.when != 0 && (next == 0 || tw.when < next) {
+				next = tw.when
+			}
+		}
+		unlock(&ts.mu)
+	}
+	return next
+}
+
+// wasiIdleTimer reports, to an onIdle callback, when the next program timer
+// is due (0 when none is) and the monotonic clock reading to measure the delay
+// from. The clock is read only when a timer is pending. A callback that hands
+// control to the host must arrange to be resumed by then, or the timer cannot
+// fire.
 //
 //go:linkname wasiIdleTimer
 func wasiIdleTimer() (now int64, pollUntil int64) {
-	return idleNow, idlePollUntil
+	if idlePollUntil == 0 {
+		return 0, 0
+	}
+	return nanotime(), idlePollUntil
 }
 
 func checkTimeouts() {}
