@@ -1,6 +1,6 @@
 # Golem's Go fork
 
-This is [golang/go](https://github.com/golang/go) with three patches that
+This is [golang/go](https://github.com/golang/go) with four patches that
 [Golem](https://github.com/golemcloud/golem)'s Go SDK needs in the toolchain
 that compiles agents to WebAssembly components. The Golem CLI downloads a
 release of this fork and builds Go components with it; nothing else about Go
@@ -58,6 +58,21 @@ monotonic time instead of reading the wall clock
 The proper fix is for the adapter to pause the wall clock too; once it does, this
 patch can go.
 
+### 4. The next timer's due time for the idle callback on wasip1 (ours)
+
+`wasiOnIdle` hands control to the host whenever nothing is runnable, but the
+callback is not told when the next Go timer is due. A timer is not something the
+host can wait on, so an async component whose goroutines wait only on a timer —
+`time.Sleep`, `time.After`, a context deadline — either exits without producing
+its result or stays suspended until some unrelated host call completes.
+
+The patch records the clock reading and `pollUntil` at each idle transition and
+exposes them as `runtime.wasiIdleTimer`, which the callback (Golem's fork of
+[go.bytecodealliance.org/pkg](https://github.com/golemcloud/go-pkg)) uses to arm
+a host clock wait that resumes the component when the timer is due. It is
+additive: a callback that ignores it behaves as before. It belongs upstream
+together with patch 1.
+
 ## Branches and tags
 
 - `golem-go1.27` — the integration branch, based on the upstream `go1.27.1` tag,
@@ -79,7 +94,7 @@ golem/release.sh go1.27.1-golem.1          # --dry-run to build without uploadin
 
 The script cross-builds `go-<os>-<arch>-bootstrap.tbz` for linux/amd64,
 linux/arm64, darwin/amd64, darwin/arm64 and windows/amd64 using Go's own
-`src/bootstrap.bash`, checks that all three patches are present in the built tree,
+`src/bootstrap.bash`, checks that all four patches are present in the built tree,
 and uploads the tarballs and their `.sha256` files to the release. The checksums
 identify the published artifacts; they are not a rebuild guarantee, because
 `bootstrap.bash` packs the tree with its current file timestamps, so two builds
