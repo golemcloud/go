@@ -66,12 +66,20 @@ host can wait on, so an async component whose goroutines wait only on a timer â€
 `time.Sleep`, `time.After`, a context deadline â€” either exits without producing
 its result or stays suspended until some unrelated host call completes.
 
-The patch records the clock reading and `pollUntil` at each idle transition and
-exposes them as `runtime.wasiIdleTimer`, which the callback (Golem's fork of
+The patch records, at each idle transition, when the next timer the program set
+is due, and exposes it with a clock reading as `runtime.wasiIdleTimer`, which the
+callback (Golem's fork of
 [go.bytecodealliance.org/pkg](https://github.com/golemcloud/go-pkg)) uses to arm
 a host clock wait that resumes the component when the timer is due. It is
 additive: a callback that ignores it behaves as before. It belongs upstream
 together with patch 1.
+
+Two details keep an idle component suspendable by a durable host. No clock is
+read at the idle transition itself; the reading is taken only when a timer is
+pending. And the background scavenger's sleep timer is not reported: it is
+housekeeping that can wait until the component runs again, and a clock wait
+armed for it would keep the component busy forever (`go1.27.1-golem.3` had both
+problems: Golem agents awaiting a promise or an RPC result never suspended).
 
 ## Branches and tags
 
