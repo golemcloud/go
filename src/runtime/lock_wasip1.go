@@ -6,6 +6,8 @@
 
 package runtime
 
+import _ "unsafe" // for go:linkname
+
 // wasm has no support for threads yet. There is no preemption.
 // See proposal: https://github.com/WebAssembly/threads
 // Waiting for a mutex or timeout is implemented as a busy loop
@@ -115,8 +117,27 @@ func wasiOnIdle(callback func() bool) {
 	onIdle = callback
 }
 
+// idleNow and idlePollUntil are the clock reading and the next timer's due time
+// (0 when no timer is pending) of the latest idle transition, for the onIdle
+// callback to read with wasiIdleTimer.
+var idleNow, idlePollUntil int64
+
 func beforeIdle(now int64, pollUntil int64, netWaiters bool) (*g, bool) {
+	if now == 0 {
+		now = nanotime()
+	}
+	idleNow, idlePollUntil = now, pollUntil
 	return nil, !netWaiters && onIdle()
+}
+
+// wasiIdleTimer reports, to an onIdle callback, the monotonic clock reading at
+// the idle transition and when the next timer is due (0 when none is). A
+// callback that hands control to the host must arrange to be resumed by then,
+// or the timer cannot fire.
+//
+//go:linkname wasiIdleTimer
+func wasiIdleTimer() (now int64, pollUntil int64) {
+	return idleNow, idlePollUntil
 }
 
 func checkTimeouts() {}
