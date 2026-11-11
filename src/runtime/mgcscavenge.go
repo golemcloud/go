@@ -151,6 +151,19 @@ func heapRetained() uint64 {
 	return gcController.heapInUse.load() + gcController.heapFree.load()
 }
 
+// scavengeReleasesMemory reports whether scavenging gives memory back to the
+// platform. On wasip1 the linear memory never shrinks and sysUnused does
+// nothing, so a scavenge releases nothing. It still reads the monotonic clock to
+// account for its work, and a durable host records each read as a host call:
+// a scavenge that a heap growth or the background scavenger starts, at a point
+// that depends on the heap's history, puts clock reads into the history that a
+// replay from a restored snapshot does not make, or the reverse. Until the first
+// GC cycle ends the scavenger has no goal yet, so every heap growth scavenges,
+// and a restored instance starts without one. On wasip1 the scavenger therefore
+// has no goal, never runs and never sleeps on a timer, and a heap growth or the
+// memory limit never scavenges inline.
+const scavengeReleasesMemory = GOOS != "wasip1"
+
 // gcPaceScavenger updates the scavenger's pacing, particularly
 // its rate and RSS goal. For this, it requires the current heapGoal,
 // and the heapGoal for the previous GC cycle.
@@ -166,6 +179,12 @@ func heapRetained() uint64 {
 // mheap_.lock must be held or the world must be stopped.
 func gcPaceScavenger(memoryLimit int64, heapGoal, lastHeapGoal uint64) {
 	assertWorldStoppedOrLockHeld(&mheap_.lock)
+
+	if !scavengeReleasesMemory {
+		scavenge.memoryLimitGoal.Store(^uint64(0))
+		scavenge.gcPercentGoal.Store(^uint64(0))
+		return
+	}
 
 	// As described at the top of this file, there are two scavenge goals here: one
 	// for gcPercent and one for memoryLimit. Let's handle the latter first because
