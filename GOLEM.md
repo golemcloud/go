@@ -1,6 +1,6 @@
 # Golem's Go fork
 
-This is [golang/go](https://github.com/golang/go) with four patches that
+This is [golang/go](https://github.com/golang/go) with five patches that
 [Golem](https://github.com/golemcloud/golem)'s Go SDK needs in the toolchain
 that compiles agents to WebAssembly components. The Golem CLI downloads a
 release of this fork and builds Go components with it; nothing else about Go
@@ -81,6 +81,35 @@ housekeeping that can wait until the component runs again, and a clock wait
 armed for it would keep the component busy forever (`go1.27.1-golem.3` had both
 problems: Golem agents awaiting a promise or an RPC result never suspended).
 
+### 5. No scavenging on wasip1 (ours)
+
+The scavenger returns free heap pages to the operating system. On wasip1 it
+cannot: a linear memory never shrinks, and `sysUnused` does nothing. A scavenge
+still reads the monotonic clock to account for its work, and on wasip1 each read
+is a host call. Two places start one: `mheap.allocSpan` scavenges inline when a
+heap growth crosses the retained-memory goal or the memory limit, and the
+background scavenger runs after a GC and then sleeps on a timer, which makes the
+scheduler read the clock on every pass while the timer is pending.
+
+Whether an allocation crosses the goal depends on the heap's whole history.
+Golem's snapshot recovery restores the agent into a fresh instance, and the
+snapshot save and load run outside the recording, so the heap after a restore
+differs from the heap the original run had. The inline scavenge then fires in a
+replayed invocation where the original did not, or the reverse, and replay
+diverges on the clock read (`mallocgc` → `mheap.allocSpan` → `nanotime`).
+
+The patch makes `gcPaceScavenger` leave both scavenger goals unset on wasip1 and
+gates both inline branches of `allocSpan`, the memory-limit one and the
+retained-memory one, on `const scavengeReleasesMemory = GOOS != "wasip1"`. The
+gate is needed as well as the goals: until the first GC cycle paces the
+scavenger its retained-memory goal is zero, so every heap growth scavenges, and
+a restored instance starts in that state. The background scavenger then finds
+no work and parks without a timer, and no allocation scavenges inline.
+`debug.FreeOSMemory` still scavenges, but only when the program calls it. Nothing
+is lost: the memory was never released on wasip1. The upstream-friendly form is
+to make `sysUnused` a no-op signal the scavenger honours on every platform where
+it is one (wasip1 and js).
+
 ## Branches and tags
 
 - `golem-go1.27` — the integration branch, based on the upstream `go1.27.1` tag,
@@ -102,7 +131,7 @@ golem/release.sh go1.27.1-golem.1          # --dry-run to build without uploadin
 
 The script cross-builds `go-<os>-<arch>-bootstrap.tbz` for linux/amd64,
 linux/arm64, darwin/amd64, darwin/arm64 and windows/amd64 using Go's own
-`src/bootstrap.bash`, checks that all four patches are present in the built tree,
+`src/bootstrap.bash`, checks that all five patches are present in the built tree,
 and uploads the tarballs and their `.sha256` files to the release. The checksums
 identify the published artifacts; they are not a rebuild guarantee, because
 `bootstrap.bash` packs the tree with its current file timestamps, so two builds
@@ -129,7 +158,7 @@ instead — that is how you test a change to this fork before releasing it.
 ```shell
 git fetch https://github.com/golang/go.git refs/tags/go1.28.0:refs/tags/go1.28.0
 git switch -c golem-go1.28 go1.28.0
-git cherry-pick <wasiOnIdle commits> <sampling commit> <gc wall-clock commit>   # from golem-go1.27
+git cherry-pick <wasiOnIdle commits> <sampling commit> <gc wall-clock commit> <idle-timer commit> <scavenger commit>   # from golem-go1.27
 ```
 
 Take the `wasiOnIdle` commits from dicej's branch for that Go version when it
