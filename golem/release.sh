@@ -100,7 +100,7 @@ grep -q goroutineTracking "$root/src/runtime/proc.go" || {
 	echo "error: the scheduler-sampling patch is missing from the built toolchain" >&2
 	exit 1
 }
-grep -q wasiIdleTimer "$root/src/runtime/lock_wasip1.go" || {
+grep -q wasiIdleDues "$root/src/runtime/lock_wasip1.go" || {
 	echo "error: the idle-timer patch is missing from the built toolchain" >&2
 	exit 1
 }
@@ -111,6 +111,10 @@ grep -q gcWallFromMono "$root/src/runtime/mgc.go" || {
 grep -q scavengeReleasesMemory "$root/src/runtime/mgcscavenge.go" &&
 	grep -q scavengeReleasesMemory "$root/src/runtime/mgcpacer.go" || {
 	echo "error: the scavenger patch is missing from the built toolchain" >&2
+	exit 1
+}
+grep -q wasiDomainEnter "$root/src/runtime/wasictx.go" || {
+	echo "error: the goroutine context patch is missing from the built toolchain" >&2
 	exit 1
 }
 if [ "$(uname -s)-$(uname -m)" = "Linux-x86_64" ]; then
@@ -139,8 +143,9 @@ Patches on top of upstream:
 - \`runtime.wasiOnIdle\` for wasip1, from [dicej/go](https://github.com/dicej/go) ([golang/go#76775](https://github.com/golang/go/pull/76775))
 - goroutine scheduling-latency sampling disabled on wasip1, so the runtime issues no clock reads whose placement depends on execution history
 - GC timestamps derived without a wall-clock read on wasip1, so a GC cycle finishing inside \`cabi_realloc\` cannot trap the component
-- the next timer's due time exposed to the idle callback on wasip1 (\`runtime.wasiIdleTimer\`), so an async component can be resumed when a Go timer is due
+- the next timer's due time exposed to the idle callback on wasip1 (\`runtime.wasiIdleWait\`), so an async component can be resumed when a Go timer is due
 - no scavenging on wasip1, where it releases no memory, so a heap growth issues no clock reads whose placement depends on the heap's history; the memory-limit heap goal counts free pages as reusable instead
+- goroutine-local host context and runtime domains on wasip1 (\`runtime.wasiSetContextHooks\`, \`runtime.wasiDomainEnter\`), so each goroutine runs in its own host context, a part of the program skipped on replay leaves the clock, timers and random state of the rest unchanged, and the runtime makes no host call for itself
 
 The assets are bootstrap toolchain trees in the layout [componentize-go](https://github.com/bytecodealliance/componentize-go) expects. The Golem CLI downloads the one matching your platform; see [GOLEM.md](https://github.com/golemcloud/go/blob/golem-go1.27/GOLEM.md).
 NOTES

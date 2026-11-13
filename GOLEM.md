@@ -1,6 +1,6 @@
 # Golem's Go fork
 
-This is [golang/go](https://github.com/golang/go) with five patches that
+This is [golang/go](https://github.com/golang/go) with six patches that
 [Golem](https://github.com/golemcloud/golem)'s Go SDK needs in the toolchain
 that compiles agents to WebAssembly components. The Golem CLI downloads a
 release of this fork and builds Go components with it; nothing else about Go
@@ -66,20 +66,23 @@ host can wait on, so an async component whose goroutines wait only on a timer �
 `time.Sleep`, `time.After`, a context deadline — either exits without producing
 its result or stays suspended until some unrelated host call completes.
 
-The patch records, at each idle transition, when the next timer the program set
-is due, and exposes it with a clock reading as `runtime.wasiIdleTimer`, which the
-callback (Golem's fork of
-[go.bytecodealliance.org/pkg](https://github.com/golemcloud/go-pkg)) uses to arm
-a host clock wait that resumes the component when the timer is due. It is
-additive: a callback that ignores it behaves as before. It belongs upstream
-together with patch 1.
+The patch records, at each idle transition, when the next timer of each runtime
+domain (patch 6) is due, and exposes it as `runtime.wasiIdleWait(i)`: the i-th
+domain, the host context to wait in, and the due time. The callback (Golem's
+fork of [go.bytecodealliance.org/pkg](https://github.com/golemcloud/go-pkg))
+arms one host `wait-until` per domain that resumes the component when the timer
+is due, and reports the completed wait with `runtime.wasiAdvanceTime`, which
+advances that domain's clock so the scheduler fires the timer. It is additive: a
+callback that ignores it behaves as before. It belongs upstream together with
+patch 1.
 
 Two details keep an idle component suspendable by a durable host. No clock is
-read at the idle transition itself; the reading is taken only when a timer is
-pending. And the background scavenger's sleep timer is not reported: it is
-housekeeping that can wait until the component runs again, and a clock wait
-armed for it would keep the component busy forever (`go1.27.1-golem.3` had both
-problems: Golem agents awaiting a promise or an RPC result never suspended).
+read at the idle transition or by the callback: the wait is until an absolute
+due time. And the runtime's own timers, such as the background scavenger's
+sleep, are not reported: they are housekeeping that can wait until the component
+runs again, and a clock wait armed for them would keep the component busy
+forever (`go1.27.1-golem.3` had both problems: Golem agents awaiting a promise or
+an RPC result never suspended).
 
 ### 5. No scavenging on wasip1 (ours)
 
@@ -123,6 +126,52 @@ and without a memory limit the goal is unchanged. The upstream-friendly form is
 to make `sysUnused` a no-op signal the scavenger honours on every platform where
 it is one (wasip1 and js).
 
+### 6. Goroutine-local host context and runtime domains on wasip1 (ours)
+
+A WASI host can keep execution context per component task, and every goroutine
+of a Go program shares one task. Golem keeps the scope of a custom durable
+operation (`durability.Run` in the Golem Go SDK) there, so without help every
+goroutine that runs while one operation waits would act inside that operation.
+The runtime cannot tell the host when it switches goroutines, so the patch lets
+the program do it. Each goroutine carries an opaque value (`g.wasiCtx`), and the
+program registers three hooks with `runtime.wasiSetContextHooks`:
+
+- switch, on the system stack in `execute`, when the goroutine about to run has
+  another value than the one installed last;
+- create, at a `go` statement before the child exists, whose result becomes the
+  child's value;
+- exit, in `goexit1`.
+
+The runtime's own goroutines (GC workers, the finalizer and cleanup goroutines)
+get no value. A goroutine that a timer function starts (`time.AfterFunc`) gets
+the value of the domain whose timer it is.
+
+A durable host also skips a completed operation on replay and returns its
+recorded result. Runtime state that every goroutine shares would carry the
+skipped part's effects into the rest of the program: its clock reads would fire
+other goroutines' timers, and its map and `select` draws would shift the random
+stream after it. So the program can run a part of itself in its own domain
+(`runtime.wasiDomainEnter`, `wasiDomainExit`). A domain has its own clock, which
+only reads made in the domain and the domain's host clock waits advance, its
+own timers heap, and its own random state for `runtime.rand` and `cheaprand`. A
+new domain is seeded with draws from its parent's state, so the parent's stream
+advances by the same amount whether or not the part runs.
+
+On wasip1 the runtime also makes no host call for itself: the scheduler, the GC,
+the sweeper and the mutex profiler read `wasiLastNanotime`, the latest monotonic
+reading any goroutine made (`nanotime`), and only the program's own reads
+(`programNanotime`: `time.Now`, `time.Sleep`, netpoll deadlines) reach the
+host. `sync.Mutex` starvation uses the clock of the waiting goroutine's domain. `Gosched` reads the clock when the calling
+goroutine's domain has a pending timer, so a goroutine that polls timers that
+way still sees them fire. The runtime's own work under a runtime lock, inside an
+allocation or on the system stack draws from the M's random state, not a
+domain's. `startTheWorld` skips its non-blocking `netpoll` when no goroutine
+waits on the poller, because on wasip1 that poll is a host call.
+
+The cost of the switch hook is one pointer compare per goroutine switch. The
+patch has no Golem code; every name is `wasi*` and every branch is gated on
+`GOOS == "wasip1"`.
+
 ## Branches and tags
 
 - `golem-go1.27` — the integration branch, based on the upstream `go1.27.1` tag,
@@ -144,7 +193,7 @@ golem/release.sh go1.27.1-golem.1          # --dry-run to build without uploadin
 
 The script cross-builds `go-<os>-<arch>-bootstrap.tbz` for linux/amd64,
 linux/arm64, darwin/amd64, darwin/arm64 and windows/amd64 using Go's own
-`src/bootstrap.bash`, checks that all five patches are present in the built tree,
+`src/bootstrap.bash`, checks that all six patches are present in the built tree,
 and uploads the tarballs and their `.sha256` files to the release. The checksums
 identify the published artifacts; they are not a rebuild guarantee, because
 `bootstrap.bash` packs the tree with its current file timestamps, so two builds
@@ -171,7 +220,7 @@ instead — that is how you test a change to this fork before releasing it.
 ```shell
 git fetch https://github.com/golang/go.git refs/tags/go1.28.0:refs/tags/go1.28.0
 git switch -c golem-go1.28 go1.28.0
-git cherry-pick <wasiOnIdle commits> <sampling commit> <gc wall-clock commit> <idle-timer commit> <scavenger commit>   # from golem-go1.27
+git cherry-pick <wasiOnIdle commits> <sampling commit> <gc wall-clock commit> <idle-timer commit> <scavenger commit> <context commit>   # from golem-go1.27
 ```
 
 Take the `wasiOnIdle` commits from dicej's branch for that Go version when it
