@@ -25,7 +25,7 @@ import _ "unsafe" // for go:linkname
 //go:linkname time_now time.now
 func time_now() (sec int64, nsec int32, mono int64) {
 	sec, nsec = walltime()
-	mono = nanotime()
+	mono = programNanotime()
 	if gcWallFromMono {
 		lastWallMinusMono = sec*1e9 + int64(nsec) - mono
 	}

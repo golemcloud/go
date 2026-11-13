@@ -41,7 +41,7 @@ func time_runtimeNano() int64 {
 	if gp.bubble != nil {
 		return gp.bubble.now
 	}
-	return nanotime()
+	return programNanotime()
 }
 
 //go:linkname time_runtimeIsBubbled time.runtimeIsBubbled
@@ -103,6 +103,10 @@ type timer struct {
 
 	// If non-nil, the timers containing t.
 	ts *timers
+
+	// wasiDom is the domain of the goroutine that armed the timer while it was
+	// in no heap (wasip1), see wasictx.go.
+	wasiDom *wasiDomain
 
 	// sendLock protects sends on the timer's channel.
 	sendLock mutex
@@ -351,7 +355,7 @@ func timeSleep(ns int64) {
 	if bubble := gp.bubble; bubble != nil {
 		now = bubble.now
 	} else {
-		now = nanotime()
+		now = programNanotime()
 	}
 	when := now + ns
 	if when < 0 { // check for overflow.
@@ -374,6 +378,9 @@ func timeSleep(ns int64) {
 // sleep and there are many goroutines then the P can wind up running the
 // timer function, goroutineReady, before the goroutine has been parked.
 func resetForSleep(gp *g, _ unsafe.Pointer) bool {
+	if GOOS == "wasip1" && gp.timer.ts == nil {
+		gp.timer.wasiDom = gp.wasiDom
+	}
 	gp.timer.reset(gp.sleepWhen, 0)
 	return true
 }
@@ -560,6 +567,9 @@ func (t *timer) modify(when, period int64, f func(arg any, seq uintptr, delay in
 
 	t.lock()
 	t.trace("modify")
+	if GOOS == "wasip1" && getg() == getg().m.curg && t.state&timerHeaped == 0 {
+		t.wasiDom = getg().wasiDom
+	}
 	oldPeriod := t.period
 	t.period = period
 	if f != nil {
@@ -699,6 +709,8 @@ func (t *timer) maybeAdd() {
 			throw("invalid timer: fake time but no syncgroup")
 		}
 		ts = &bubble.timers
+	} else if GOOS == "wasip1" {
+		ts = wasiTimersOf(t, mp.p.ptr())
 	} else {
 		ts = &mp.p.ptr().timers
 	}
@@ -1000,7 +1012,7 @@ func (ts *timers) check(now int64, bubble *synctestBubble) (rnow, pollUntil int6
 	if zombies < 0 {
 		badTimer()
 	}
-	force := ts == &getg().m.p.ptr().timers && int(zombies) > int(ts.len.Load())/4
+	force := (GOOS == "wasip1" || ts == &getg().m.p.ptr().timers) && int(zombies) > int(ts.len.Load())/4
 
 	if now < next && !force {
 		// Next timer is not ready to run, and we don't need to clear deleted timers.
@@ -1026,7 +1038,7 @@ func (ts *timers) check(now int64, bubble *synctestBubble) (rnow, pollUntil int6
 		// is significantly faster under contention, such as in
 		// package time's BenchmarkTimerAdjust10000,
 		// though we do not fully understand why.
-		force = ts == &getg().m.p.ptr().timers && int(ts.zombies.Load()) > int(ts.len.Load())/4
+		force = (GOOS == "wasip1" || ts == &getg().m.p.ptr().timers) && int(ts.zombies.Load()) > int(ts.len.Load())/4
 		if force {
 			ts.adjust(now, true)
 		}
@@ -1202,7 +1214,13 @@ func (t *timer) unlockAndRun(now int64, bubble *synctestBubble) {
 		}
 	}
 
+	if GOOS == "wasip1" {
+		wasiFiring, wasiFiringDom = true, t.wasiDom
+	}
 	f(arg, seq, delay)
+	if GOOS == "wasip1" {
+		wasiFiring, wasiFiringDom = false, nil
+	}
 
 	if t.isChan {
 		unlock(&t.sendLock)
@@ -1414,6 +1432,9 @@ func (t *timer) maybeRunChan(c *hchan) {
 
 	t.lock()
 	now := nanotime()
+	if GOOS == "wasip1" {
+		now = wasiTimerNow(t)
+	}
 	if t.isFake {
 		now = getg().bubble.now
 	}
