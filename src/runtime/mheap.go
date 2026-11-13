@@ -1318,7 +1318,7 @@ HaveSpan:
 	// to do this before calling sysUsed because that may commit address space.
 	bytesToScavenge := uintptr(0)
 	forceScavenge := false
-	if limit := gcController.memoryLimit.Load(); !gcCPULimiter.limiting() {
+	if limit := gcController.memoryLimit.Load(); scavengeReleasesMemory && !gcCPULimiter.limiting() {
 		// Assist with scavenging to maintain the memory limit by the amount
 		// that we expect to page in.
 		inuse := gcController.mappedReady.Load()
@@ -1329,7 +1329,7 @@ HaveSpan:
 			forceScavenge = true
 		}
 	}
-	if goal := scavenge.gcPercentGoal.Load(); goal != ^uint64(0) && growth > 0 {
+	if goal := scavenge.gcPercentGoal.Load(); scavengeReleasesMemory && goal != ^uint64(0) && growth > 0 {
 		// We just caused a heap growth, so scavenge down what will soon be used.
 		// By scavenging inline we deal with the failure to allocate out of
 		// memory fragments by scavenging the memory fragments that are least
