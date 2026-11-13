@@ -731,5 +731,8 @@ func notifyListCheck(sz uintptr) {
 
 //go:linkname internal_sync_nanotime internal/sync.runtime_nanotime
 func internal_sync_nanotime() int64 {
+	if GOOS == "wasip1" {
+		return wasiGoroutineNow()
+	}
 	return nanotime()
 }

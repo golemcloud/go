@@ -167,6 +167,11 @@ func rand() uint64 {
 	// 3.7ns/call this way versus 4.3ns/call with acquirem (+16%).
 	mp := getg().m
 	c := &mp.chacha8
+	if GOOS == "wasip1" {
+		if d := wasiRandDomain(); d != nil {
+			c = &d.chacha8
+		}
+	}
 	for {
 		// Note: c.Next is marked nosplit,
 		// so we don't need to use mp.locks
@@ -234,8 +239,14 @@ func cheaprand() uint32 {
 	// Only the platform that supports 64-bit multiplication
 	// natively should be allowed.
 	if bits.UintSize == 64 {
-		mp.cheaprand += 0x53c5ca59
-		hi, lo := bits.Mul32(mp.cheaprand, mp.cheaprand^0x74743c1b)
+		s := &mp.cheaprand
+		if GOOS == "wasip1" {
+			if d := wasiRandDomain(); d != nil {
+				s = &d.cheaprand
+			}
+		}
+		*s += 0x53c5ca59
+		hi, lo := bits.Mul32(*s, *s^0x74743c1b)
 		return hi ^ lo
 	}
 

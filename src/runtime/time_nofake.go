@@ -30,6 +30,19 @@ var faketime int64
 //go:linkname nanotime
 //go:nosplit
 func nanotime() int64 {
+	if GOOS == "wasip1" {
+		// The runtime does not read the host clock for itself on wasip1; see
+		// programNanotime.
+		return wasiSchedNow()
+	}
+	return nanotime1()
+}
+
+// programNanotime reads the monotonic clock on behalf of the program. On
+// wasip1 it is the only monotonic read that reaches the host: the runtime's
+// own uses of nanotime (scheduler, GC, sweeper, scavenger) see the latest
+// reading the program made.
+func programNanotime() int64 {
 	return nanotime1()
 }
 
