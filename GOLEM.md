@@ -106,7 +106,20 @@ scavenger its retained-memory goal is zero, so every heap growth scavenges, and
 a restored instance starts in that state. The background scavenger then finds
 no work and parks without a timer, and no allocation scavenges inline.
 `debug.FreeOSMemory` still scavenges, but only when the program calls it. Nothing
-is lost: the memory was never released on wasip1. The upstream-friendly form is
+is lost: the memory was never released on wasip1.
+
+Scavenging was still the only thing that lowered `mappedReady`, which the
+memory-limit heap goal compares with the limit. Without it, after the heap
+shrinks from a peak above the memory limit, the goal's overage term would stay
+at that peak for good and the GC would run continuously: with a limit lowered by
+`debug.SetMemoryLimit` or a `GOMEMLIMIT` the heap once passed, about fifteen
+times as many cycles, and once the GC CPU limiter turns off mark assists, a
+mark phase that cannot finish until the goroutine yields, so the heap grows by
+everything allocated meanwhile. So on wasip1 `memoryLimitHeapGoal` leaves free
+pages out of `mappedReady`, as the scavenger's accounting did once it had
+released them: they are reusable without growing the linear memory, and no GC
+can make the memory smaller. The stats still report them as free, not released,
+and without a memory limit the goal is unchanged. The upstream-friendly form is
 to make `sysUnused` a no-op signal the scavenger honours on every platform where
 it is one (wasip1 and js).
 
