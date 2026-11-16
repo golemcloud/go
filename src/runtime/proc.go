@@ -5451,10 +5451,6 @@ func newproc1(fn *funcval, callergp *g, callerpc uintptr, parked bool, waitreaso
 		newg.bubble = callergp.bubble
 		if mp.curg != nil {
 			newg.labels = mp.curg.labels
-			if GOOS == "wasip1" && waitreason == waitReasonCoroutine {
-				newg.wasiCtx = mp.curg.wasiCtx
-				newg.wasiDom = mp.curg.wasiDom
-			}
 		}
 		if goroutineProfile.active {
 			// A concurrent goroutine profile is running. It should include

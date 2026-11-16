@@ -51,10 +51,12 @@ import (
 // the clock that the scheduler keeps for itself, which is the latest reading
 // any goroutine made. The runtime makes no host call for itself.
 //
-// Coroutines (iter.Pull) carry their creator's value and domain but run in
-// whatever host context is installed by the goroutine that resumes them. They,
-// and the goroutines the runtime starts for itself, are not reported to the
-// create and exit hooks.
+// A coroutine (iter.Pull) runs as part of the goroutine that switches to it:
+// each coroutine switch hands the switching goroutine's value and domain to the
+// goroutine it switches to, so the installed value stays the right one and a
+// coroutine that blocks resumes in the context and domain of the goroutine that
+// last switched to it. Coroutines, and the goroutines the runtime starts for
+// itself, are not reported to the create and exit hooks.
 
 var (
 	wasiCtxInstalled  unsafe.Pointer
