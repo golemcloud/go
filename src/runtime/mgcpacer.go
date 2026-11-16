@@ -1116,6 +1116,17 @@ func (c *gcControllerState) memoryLimitHeapGoal() uint64 {
 
 	memoryLimit := uint64(c.memoryLimit.Load())
 
+	if !scavengeReleasesMemory {
+		// Without a scavenger, free pages stay counted in mappedReady for good,
+		// and a GC cannot make them count less: a linear memory never shrinks.
+		// They are reusable for heap objects at no cost to the limit, so count
+		// them like the scavenger's accounting would after releasing them, and
+		// let only memory that holds something push the goal down. Stats still
+		// report them as free, not released.
+		mappedReady -= heapFree
+		heapFree = 0
+	}
+
 	// Compute term 1.
 	nonHeapMemory := mappedReady - heapFree - heapAlloc
 
