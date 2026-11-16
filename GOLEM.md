@@ -144,7 +144,11 @@ program registers three hooks with `runtime.wasiSetContextHooks`:
 
 The runtime's own goroutines (GC workers, the finalizer and cleanup goroutines)
 get no value. A goroutine that a timer function starts (`time.AfterFunc`) gets
-the value of the domain whose timer it is.
+the value of the domain whose timer it is. A coroutine (`iter.Pull`) runs as part
+of the goroutine that switches to it: `coroswitch` hands the switching
+goroutine's value and domain to the goroutine it switches to, so the switch
+needs no hook call, and a coroutine that blocks resumes in the context and
+domain of the goroutine that last switched to it.
 
 A durable host also skips a completed operation on replay and returns its
 recorded result. Runtime state that every goroutine shares would carry the
