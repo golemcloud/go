@@ -3803,6 +3803,11 @@ top:
 			delay = 0
 		}
 		list, delta := netpoll(delay) // block until new work is available
+		if GOOS == "wasip1" && pollUntil != 0 {
+			// Without an idle callback this poll is the clock wait of the
+			// timers; see wasiPollReturned.
+			wasiPollReturned(nanotime1())
+		}
 		// Refresh now again, after potentially blocking.
 		now = nanotime()
 		sched.pollUntil.Store(0)

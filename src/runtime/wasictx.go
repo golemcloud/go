@@ -49,7 +49,9 @@ import (
 // goroutines) and the runtime's own work on the system stack, under a runtime
 // lock or inside an allocation draw from the runtime's random state and read
 // the clock that the scheduler keeps for itself, which is the latest reading
-// any goroutine made. The runtime makes no host call for itself.
+// any goroutine made. The runtime makes no host call for itself while an idle
+// callback hands control to the host; without one, the scheduler reads the
+// clock after it blocks in netpoll for the next timer (wasiPollReturned).
 //
 // A coroutine (iter.Pull) runs as part of the goroutine that switches to it:
 // each coroutine switch hands the switching goroutine's value and domain to the
@@ -398,6 +400,19 @@ func wasiAdvanceTime(dom unsafe.Pointer, t int64) {
 	}
 	if d := (*wasiDomain)(dom); t > d.now {
 		d.now = t
+	}
+}
+
+// wasiPollReturned records that the scheduler's blocking netpoll, which waits
+// for the next timer when no idle callback hands control to the host, returned
+// at monotonic time t. The poll stood for the clock wait of every domain whose
+// next timer was due by then, so those domains reach that timer, as with
+// wasiAdvanceTime; the clocks of the other domains stay where they are.
+func wasiPollReturned(t int64) {
+	for _, d := range wasiDomains {
+		if d.idleDue != 0 && d.idleDue <= t {
+			wasiAdvanceTime(unsafe.Pointer(d), d.idleDue)
+		}
 	}
 }
 
