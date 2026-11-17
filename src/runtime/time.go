@@ -1433,7 +1433,7 @@ func (t *timer) maybeRunChan(c *hchan) {
 	t.lock()
 	now := nanotime()
 	if GOOS == "wasip1" {
-		now = wasiTimerNow(t)
+		now = wasiChanTimerNow(t)
 	}
 	if t.isFake {
 		now = getg().bubble.now

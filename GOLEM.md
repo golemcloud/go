@@ -165,7 +165,10 @@ On wasip1 the runtime also makes no host call for itself: the scheduler, the GC,
 the sweeper and the mutex profiler read `wasiLastNanotime`, the latest monotonic
 reading any goroutine made (`nanotime`), and only the program's own reads
 (`programNanotime`: `time.Now`, `time.Sleep`, netpoll deadlines) reach the
-host. `sync.Mutex` starvation uses the clock of the waiting goroutine's domain. `Gosched` reads the clock when the calling
+host. A receive or `select` on the channel of a timer that is in no heap, because
+no goroutine blocks on it, reads the clock itself when the timer's domain clock
+has not reached the timer, as `nanotime` does elsewhere: nothing else would fire
+that timer. `sync.Mutex` starvation uses the clock of the waiting goroutine's domain. `Gosched` reads the clock when the calling
 goroutine's domain has a pending timer, so a goroutine that polls timers that
 way still sees them fire. The runtime's own work under a runtime lock, inside an
 allocation or on the system stack draws from the M's random state, not a

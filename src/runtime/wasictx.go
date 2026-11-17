@@ -454,6 +454,24 @@ func wasiTimerNow(t *timer) int64 {
 	return wasiSchedNow()
 }
 
+// wasiChanTimerNow is the clock that a receive or select on the channel of t
+// checks t against while t is in no heap. Only such a check fires t, so when
+// t's domain clock has not reached t yet, the goroutine that checks reads the
+// clock itself, as nanotime does on other platforms. The receive or select is
+// the program's own, so the reading is too: it belongs to the goroutine's domain
+// and host context.
+func wasiChanTimerNow(t *timer) int64 {
+	now := wasiTimerNow(t)
+	if t.when > now {
+		if gp := getg(); gp == gp.m.curg {
+			if r := nanotime1(); r > now {
+				now = r
+			}
+		}
+	}
+	return now
+}
+
 // wasiGoschedClock reads the clock for a goroutine that yields while a timer of
 // its domain is pending, so that the timer can fire.
 func wasiGoschedClock() {
