@@ -399,6 +399,11 @@ func forcegchelper() {
 //
 //go:nosplit
 func Gosched() {
+	if GOOS == "wasip1" {
+		// The scheduler does not read the clock on wasip1: a goroutine that
+		// polls its domain's timers through Gosched reads it itself.
+		wasiGoschedClock()
+	}
 	checkTimeouts()
 	mcall(gosched_m)
 }
@@ -891,6 +896,9 @@ func schedinit() {
 	cpuinit(godebug) // must run before AlgInit
 	maps.AlgInit()   // maps, hash, rand must not be used before this call
 	mcommoninit(gp.m, -1)
+	if GOOS == "wasip1" {
+		wasiDomainInit()
+	}
 	modulesinit()   // provides activeModules
 	typelinksinit() // uses maps, activeModules
 	itabsinit()     // uses activeModules
@@ -1789,7 +1797,9 @@ func startTheWorldWithSema(now int64, w worldStop) int64 {
 	assertWorldStopped()
 
 	mp := acquirem() // disable preemption because it can be holding p in a local var
-	if netpollinited() {
+	// On wasip1 the poll is a host call; skip it when no goroutine waits on
+	// the poller.
+	if netpollinited() && (GOOS != "wasip1" || netpollAnyWaiters()) {
 		list, delta := netpoll(0) // non-blocking
 		injectglist(&list)
 		netpollAdjustWaiters(delta)
@@ -3376,6 +3386,9 @@ func execute(gp *g, inheritTime bool) {
 	gp.waitsince = 0
 	gp.preempt = false
 	gp.stackguard0 = gp.stack.lo + stackGuard
+	if GOOS == "wasip1" {
+		wasiCtxInstall(gp.wasiCtx)
+	}
 	if !inheritTime {
 		mp.p.ptr().schedtick++
 	}
@@ -3442,7 +3455,15 @@ top:
 	// which may steal timers. It's important that between now
 	// and then, nothing blocks, so these numbers remain mostly
 	// relevant.
-	now, pollUntil, _ := pp.timers.check(0, nil)
+	var checkNow, domainPollUntil int64
+	if GOOS == "wasip1" {
+		checkNow = wasiSchedNow()
+		domainPollUntil = wasiCheckTimers()
+	}
+	now, pollUntil, _ := pp.timers.check(checkNow, nil)
+	if domainPollUntil != 0 && (pollUntil == 0 || domainPollUntil < pollUntil) {
+		pollUntil = domainPollUntil
+	}
 
 	// Try to schedule the trace reader.
 	if traceEnabled() || traceShuttingDown() {
@@ -3782,6 +3803,11 @@ top:
 			delay = 0
 		}
 		list, delta := netpoll(delay) // block until new work is available
+		if GOOS == "wasip1" && pollUntil != 0 {
+			// Without an idle callback this poll is the clock wait of the
+			// timers; see wasiPollReturned.
+			wasiPollReturned(nanotime1())
+		}
 		// Refresh now again, after potentially blocking.
 		now = nanotime()
 		sched.pollUntil.Store(0)
@@ -4503,6 +4529,9 @@ func goyield_m(gp *g) {
 
 // Finishes execution of the current goroutine.
 func goexit1() {
+	if GOOS == "wasip1" {
+		wasiCtxExited(getg())
+	}
 	if raceenabled {
 		if gp := getg(); gp.bubble != nil {
 			racereleasemergeg(gp, gp.bubble.raceaddr())
@@ -4551,6 +4580,8 @@ func gdestroy(gp *g) {
 	gp.waitreason = waitReasonZero
 	gp.param = nil
 	gp.labels = nil
+	gp.wasiCtx = nil
+	gp.wasiDom = nil
 	gp.timer = nil
 	gp.bubble = nil
 	gp.fipsOnlyBypass = false
@@ -5349,8 +5380,17 @@ func malg(stacksize int32) *g {
 func newproc(fn *funcval) {
 	gp := getg()
 	pc := sys.GetCallerPC()
+	var childCtx unsafe.Pointer
+	var childDom *wasiDomain
+	if GOOS == "wasip1" {
+		childCtx, childDom = wasiForChild(gp, fn)
+	}
 	systemstack(func() {
 		newg := newproc1(fn, gp, pc, false, waitReasonZero)
+		if GOOS == "wasip1" {
+			newg.wasiCtx = childCtx
+			newg.wasiDom = childDom
+		}
 
 		pp := getg().m.p.ptr()
 		runqput(pp, newg, true)
@@ -6527,6 +6567,13 @@ func checkdead() {
 	for _, pp := range allp {
 		if len(pp.timers.heap) > 0 {
 			return
+		}
+	}
+	if GOOS == "wasip1" {
+		for _, d := range wasiDomains {
+			if len(d.timers.heap) > 0 {
+				return
+			}
 		}
 	}
 

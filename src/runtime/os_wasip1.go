@@ -264,6 +264,7 @@ func nanotime1() int64 {
 	if clock_time_get(clockMonotonic, 0, &time) != 0 {
 		throw("clock_time_get failed")
 	}
+	wasiObserveTime(int64(time))
 	return int64(time)
 }
 

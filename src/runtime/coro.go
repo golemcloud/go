@@ -153,6 +153,15 @@ func coroswitch_m(gp *g) {
 		gp.lockedm.set(nil)
 	}
 
+	// On wasip1 a coroutine runs as part of the goroutine that switches to it:
+	// the goroutine switched to takes this one's host context and domain, so the
+	// installed context stays the right one. See wasictx.go.
+	var wasiCtx unsafe.Pointer
+	var wasiDom *wasiDomain
+	if GOOS == "wasip1" {
+		wasiCtx, wasiDom = gp.wasiCtx, gp.wasiDom
+	}
+
 	if exit {
 		// The M might have a non-zero OS thread lock count when we get here, gdestroy
 		// will avoid destroying the M if the G isn't explicitly locked to it via lockedm,
@@ -221,6 +230,9 @@ func coroswitch_m(gp *g) {
 	// directly if possible.
 	setGNoWB(&mp.curg, gnext)
 	setMNoWB(&gnext.m, mp)
+	if GOOS == "wasip1" {
+		gnext.wasiCtx, gnext.wasiDom = wasiCtx, wasiDom
+	}
 
 	// Synchronize with any out-standing goroutine profile. We're about to start
 	// executing, and an invariant of the profiler is that we tryRecordGoroutineProfile

@@ -97,3 +97,8 @@ func write(fd uintptr, p unsafe.Pointer, n int32) int32 {
 	unlock(&faketimeState.lock)
 	return res
 }
+
+// programNanotime reads the monotonic clock on behalf of the program.
+func programNanotime() int64 {
+	return nanotime()
+}

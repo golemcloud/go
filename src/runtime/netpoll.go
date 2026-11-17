@@ -378,7 +378,7 @@ func poll_runtime_pollSetDeadline(pd *pollDesc, d int64, mode int) {
 	rd0, wd0 := pd.rd, pd.wd
 	combo0 := rd0 > 0 && rd0 == wd0
 	if d > 0 {
-		d += nanotime()
+		d += programNanotime()
 		if d <= 0 {
 			// If the user has a deadline in the future, but the delay calculation
 			// overflows, then set the deadline to the maximum possible value.
