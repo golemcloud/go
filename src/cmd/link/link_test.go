@@ -2265,6 +2265,67 @@ func main() {
 }
 `
 
+func TestWasmReactorDeadImport(t *testing.T) {
+	testenv.MustHaveGoBuild(t)
+	t.Setenv("GOOS", "wasip1")
+	t.Setenv("GOARCH", "wasm")
+	t.Setenv("GOTOOLCHAIN", "local")
+	for _, program := range []struct{ name, source string }{
+		{"http", `package main
+import "net/http"
+//go:wasmexport ping
+func ping() uint32 { return uint32(http.DefaultClient.Timeout) }
+func main() {}
+`},
+		{"fmt-and-http", `package main
+import ("fmt"; "net/http")
+//go:wasmexport ping
+func ping() uint32 { return uint32(len(fmt.Sprint(http.DefaultClient))) }
+func main() {}
+`},
+	} {
+		t.Run(program.name, func(t *testing.T) {
+			dir := t.TempDir()
+			write := func(name, source string) {
+				t.Helper()
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(source), 0666); err != nil {
+					t.Fatal(err)
+				}
+			}
+			write("go.mod", "module reactor\n\ngo 1.27.1\n")
+			write("main.go", program.source)
+			build := func() []byte {
+				t.Helper()
+				out := filepath.Join(dir, "reactor.wasm")
+				cmd := goCmd(t, "build", "-trimpath", "-buildmode=c-shared", "-o", out, ".")
+				cmd.Dir = dir
+				if output, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("build failed: %v\n%s", err, output)
+				}
+				data, err := os.ReadFile(out)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return data
+			}
+			baseline := build()
+			for _, source := range []string{
+				"package main\nimport \"encoding/hex\"\nfunc unused() { _ = hex.EncodeToString }\n",
+				"package main\nimport _ \"encoding/hex\"\n",
+			} {
+				write("unused.go", source)
+				if got := build(); !bytes.Equal(baseline, got) {
+					t.Fatalf("dead import changed reactor bytes (%d -> %d)", len(baseline), len(got))
+				}
+			}
+			write("main.go", strings.Replace(program.source, "return ", "return 1 + ", 1))
+			if bytes.Equal(baseline, build()) {
+				t.Fatal("reachable code change did not change reactor bytes")
+			}
+		})
+	}
+}
+
 // Test that type data is stored in the types section.
 func TestTypePlacement(t *testing.T) {
 	testenv.MustHaveGoRun(t)

@@ -640,7 +640,10 @@ func (gcToolchain) ld(b *Builder, root *Action, targetPath, importcfg, mainpkg s
 		compiler = envList("CC", cfg.DefaultCC(cfg.Goos, cfg.Goarch))
 	}
 	ldflags = append(ldflags, "-buildmode="+ldBuildmode)
-	if root.buildID != "" {
+	// Reactor artifacts identify linked code and data, not source actions.
+	// An unreachable import must not change their default build ID. Explicit
+	// user build IDs are appended below and remain effective.
+	if root.buildID != "" && !(cfg.Goarch == "wasm" && ldBuildmode == "c-shared") {
 		ldflags = append(ldflags, "-buildid="+root.buildID)
 	}
 	ldflags = append(ldflags, forcedLdflags...)

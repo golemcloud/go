@@ -816,6 +816,24 @@ func (l *Loader) SymName(i Sym) string {
 	return r.Sym(li).Name(r.Reader)
 }
 
+// SymContentHash returns a stable sort key for an object-backed content-addressed
+// symbol, or an empty string for other symbols. Such a symbol's name belongs to
+// whichever duplicate was loaded first and is not a stable identity.
+func (l *Loader) SymContentHash(i Sym) string {
+	if l.IsExternal(i) {
+		return ""
+	}
+	r, li := l.toLocal(i)
+	if li >= uint32(r.ndef) && li < uint32(r.ndef+r.nhashed64def) {
+		return fmt.Sprintf("\x00hash64:%016x", r.Hash64(li-uint32(r.ndef)))
+	}
+	if r.IsContentHashed(li) {
+		h := r.Hash(li - uint32(r.ndef+r.nhashed64def))
+		return "\x00hash:" + string(h[:])
+	}
+	return ""
+}
+
 // Returns the version of the i-th symbol.
 func (l *Loader) SymVersion(i Sym) int {
 	if l.IsExternal(i) {

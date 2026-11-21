@@ -1,0 +1,30 @@
+[short] skip
+
+env GOOS=wasip1
+env GOARCH=wasm
+
+# A default reactor omits the source-action ID.
+go build -buildmode=c-shared -o reactor.wasm main.go
+go tool buildid reactor.wasm
+! stdout .
+
+# Explicit linker IDs, including an empty one, remain effective.
+go build -buildmode=c-shared -ldflags=-buildid=explicit-reactor-id -o reactor.wasm main.go
+go tool buildid reactor.wasm
+stdout '^explicit-reactor-id$'
+go build -buildmode=c-shared -ldflags=-buildid= -o reactor.wasm main.go
+go tool buildid reactor.wasm
+! stdout .
+
+# Executable Wasm retains its automatic source-action ID.
+go build -o executable.wasm main.go
+go tool buildid executable.wasm
+stdout .
+
+-- main.go --
+package main
+
+//go:wasmexport ping
+func ping() uint32 { return 7 }
+
+func main() {}
