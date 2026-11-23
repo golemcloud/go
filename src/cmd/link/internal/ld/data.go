@@ -2365,8 +2365,13 @@ func (state *dodataState) dodataSect(ctxt *Link, symn sym.SymKind, syms []loader
 	for k, s := range syms {
 		ss := ldr.SymSize(s)
 		sl[k] = symNameSize{sz: ss, sym: s}
-		if !sortBySize {
+		if !sortBySize || ctxt.IsWasm() {
 			sl[k].name = ldr.SymName(s)
+			if ctxt.IsWasm() {
+				if hash := ldr.SymContentHash(s); hash != "" {
+					sl[k].name = hash
+				}
+			}
 		}
 		ds := int64(len(ldr.Data(s)))
 		switch {
@@ -2427,7 +2432,10 @@ func (state *dodataState) dodataSect(ctxt *Link, symn sym.SymKind, syms []loader
 			case isz != jsz:
 				return isz < jsz
 			}
-		} else {
+		}
+		if !sortBySize || ctxt.IsWasm() {
+			// Unreachable imports may change symbol numbers. Keep the Wasm
+			// data layout independent of symbols discarded by deadcode.
 			iname := sl[i].name
 			jname := sl[j].name
 			if iname != jname {
@@ -2489,7 +2497,10 @@ func (state *dodataState) dodataSect(ctxt *Link, symn sym.SymKind, syms []loader
 
 				if iIsTypelink && jIsTypelink {
 					// typelink symbols sort by type string
-					return sl[i].typeStr < sl[j].typeStr
+					if sl[i].typeStr != sl[j].typeStr || !ctxt.IsWasm() {
+						return sl[i].typeStr < sl[j].typeStr
+					}
+					return sl[i].name < sl[j].name
 				} else if iIsTypelink {
 					// typelink < non-typelink
 					return true
